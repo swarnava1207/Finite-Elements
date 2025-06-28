@@ -1,7 +1,11 @@
 import numpy as np
+import sys
+from PyQt5 import QtWidgets
+import pyqtgraph as pg
+
 import time
 from datetime import datetime
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, lil_matrix, triu, coo_matrix
 import matplotlib
 #matplotlib.use('Agg')  # Use TkAgg backend for interactive plotting
 import matplotlib.pyplot as plt
@@ -27,32 +31,79 @@ for i in range(len(all)):
             all[i].extend([tuple(map(int, line.strip().split())) for line in lines])
 
 def show_mesh(coordinates, elements):
+    from vispy import use
+    use('glfw')
+    from vispy import scene, color, app
+    coords = np.asarray(coordinates, dtype=np.float32)
+    elems  = np.asarray(elements,   dtype=np.int32) - 1
+    ntri   = elems.shape[0]
 
-    coordinates_np = np.array(coordinates)
-    elements_np = np.array(elements) - 1  # Adjust for zero-based indexing in Python\
-    plt.figure(figsize=(8, 8))
-    for element in elements_np:
-        pts = coordinates_np[element]
-        plt.fill(pts[:, 0], pts[:, 1], edgecolor='black', fill=True)
-    plt.scatter(coordinates_np[:, 0], coordinates_np[:, 1], color='red', s=10)
-    plt.title('Mesh Visualization')
-    plt.xlabel('X-axis')
-    plt.ylabel('Y-axis')
-    plt.axis('equal')
-    plt.grid()
-    # plt.savefig(f'mesh_visualization_{datetime.now()}.png')
-    plt.show()
-    #print("Number of elements:", len(elements_np))
+    # Pick per-triangle colors
+    cmap = color.get_colormap("turbo")
+    tri_colors = cmap.map(np.linspace(0, 1, ntri))
+
+    # Build canvas + 2D pan/zoom view
+    canvas = scene.SceneCanvas(keys='interactive',
+                               bgcolor='white',
+                               size=(800,800),
+                               show=True)
+    view   = canvas.central_widget.add_view()
+    view.camera = 'panzoom'
+
+    # Draw filled triangles (no edges)
+    mesh = scene.visuals.Mesh(
+        vertices=coords,
+        faces=elems,
+        face_colors=tri_colors,
+        shading=None        # flat shading
+    )
+    view.add(mesh)
+
+    all_edges = np.vstack([
+    coords[elems[:, [0,1]]],
+    coords[elems[:, [1,2]]],
+    coords[elems[:, [2,0]]],
+    ]).reshape(-1, 2, 2)
+
+    # Flatten to a (N_points, 2) array for Line
+    segs = all_edges.reshape(-1, 2)
+
+    # Create a Line visual, in 'segments' mode, colored black
+    lines = scene.visuals.Line(
+        pos=segs,
+        connect='segments',
+        color=(0, 0, 0, 1),   # RGBA tuple is more reliable than 'black'
+        width=1.0,
+        method='gl'           # ensure we’re using the GL backend
+    )
+    # Draw on top of the mesh:
+    # Disable depth‐testing so edges aren’t hidden by the fills:
+    lines.set_gl_state(depth_test=False)
+
+    # Force lines to draw *after* the mesh:
+    lines.order = 1                # give it a higher draw-order
+
+    view.add(lines)
+
+    # Draw nodes on top
+    scatter = scene.visuals.Markers()
+    scatter.set_data(coords, face_color='red', size=5)
+    view.add(scatter)
+
+    # Fit the data
+    view.camera.set_range(x=(coords[:,0].min(), coords[:,0].max()),
+                          y=(coords[:,1].min(), coords[:,1].max()))
+
+    app.run()
+
 
 #show_mesh()
 
 def nodes2element(coordinates, elements):
-    
-
     num_nodes = len(coordinates)
     num_elements = len(elements)
 
-    connectivity = np.zeros((num_nodes, num_nodes), dtype=int)
+    connectivity = lil_matrix((num_nodes, num_nodes), dtype=np.int32)
    
     for k,element in enumerate(elements):
         for i in range(4):
@@ -63,69 +114,87 @@ def nodes2element(coordinates, elements):
     return csr_matrix(connectivity)
 
 def nodes2edge(coordinates, elements):
-    num_nodes = len(coordinates)
-    element_matrix = nodes2element(coordinates, elements).toarray()
-    
-    # Create a boolean mask where either element_matrix[i,j] or element_matrix[j,i] is non-zero
-    mask = (element_matrix != 0) | (element_matrix.T != 0)
-    
-    # Create a symmetric connectivity matrix
-    connectivity = np.zeros((num_nodes, num_nodes), dtype=int)
-    
-    # Get upper triangular indices where mask is True
-    rows, cols = np.triu_indices(num_nodes, k=1)
-    valid_edges = mask[rows, cols]
-    
-    # Assign edge numbers (1-based indexing)
-    edge_indices = np.where(valid_edges)[0]
-    edge_count = len(edge_indices)
-    
-    # Assign edge numbers to both (i,j) and (j,i) to maintain symmetry
-    connectivity_vals = np.arange(1, edge_count + 1)
-    for idx, edge_num in zip(edge_indices, connectivity_vals):
-        i, j = rows[idx], cols[idx]
-        connectivity[i, j] = edge_num
-        connectivity[j, i] = edge_num
-    
-    return csr_matrix(connectivity), edge_count
+    # Get the CSR element-incidence matrix
+    element_matrix = nodes2element(coordinates, elements)
+    num_nodes = element_matrix.shape[0]
+
+    # Build symmetric adjacency: nonzero if i->j or j->i
+    sym = element_matrix + element_matrix.T
+
+    # Extract strict upper-triangular nonzero entries
+    upper = triu(sym, k=1).tocoo()
+    rows, cols = upper.row, upper.col
+
+    # Number of edges and their 1-based IDs
+    edge_count = len(rows)
+    edge_ids = np.arange(1, edge_count + 1)
+
+    # Build symmetric connectivity entries: both (i,j) and (j,i)
+    row_inds = np.concatenate([rows, cols])
+    col_inds = np.concatenate([cols, rows])
+    data     = np.concatenate([edge_ids, edge_ids])
+
+    connectivity = coo_matrix(
+        (data, (row_inds, col_inds)),
+        shape=(num_nodes, num_nodes)
+    ).tocsr()
+
+    return connectivity, edge_count
+
+
 
 def edge2element(coordinates, elements):
-    nodes2edge_matrix, edge_no = nodes2edge(coordinates, elements)
-    nodes2edge_matrix = nodes2edge_matrix.toarray()
-    nodes2element_matrix = nodes2element(coordinates, elements).toarray()
-    
-    # Initialize result matrix
+    # nodes2edge and nodes2element now return csr_matrix
+    nodes2edge_matrix, edge_no = nodes2edge(coordinates, elements)      # csr_matrix, and total # of edges
+    nodes2element_matrix = nodes2element(coordinates, elements)         # csr_matrix
+    # print(f"Number of edges: {edge_no}")
+    # print(f"nodes2edge_matrix: {nodes2edge_matrix}")
+    # print(f"nodes2element_matrix: {nodes2element_matrix}")
+    # Extract only the strict upper‐triangular entries of the edge‐connectivity
+    upper = triu(nodes2edge_matrix, k=1).tocoo()
+    i_indices = upper.row
+    j_indices = upper.col
+    edge_ids  = upper.data.astype(int) - 1    # convert to 0‐based
+    # print(f"i_indices: {i_indices}, j_indices: {j_indices}, edge_ids: {edge_ids}")
+    # Look up the two element‐incidence values for each (i,j)
+    # Missing entries in a CSR default to 0
+    v_ij = np.array(
+        [nodes2element_matrix[ii, jj] for ii, jj in zip(i_indices, j_indices)],
+        dtype=int
+    )
+    v_ji = np.array(
+        [nodes2element_matrix[jj, ii] for ii, jj in zip(i_indices, j_indices)],
+        dtype=int
+    )
+
+    # The same "swap" condition as before
+    condition = (v_ij == 0) | (v_ji != 0)
+
+    # Prepare the output
     sol_matrix = np.zeros((edge_no, 4), dtype=int)
-    print(f"Number of edges: {edge_no}")
-    print(f"nodes2edge_matrix: {nodes2edge_matrix}")
-    print(f"nodes2element_matrix: {nodes2element_matrix}")
-    # Get upper triangular indices where edges exist
-    i_indices, j_indices = np.where(np.triu(nodes2edge_matrix > 0))
-    edge_ids = nodes2edge_matrix[i_indices, j_indices] - 1  # 0-based indexing
-    print(f"i_indices: {i_indices}, j_indices: {j_indices}, edge_ids: {edge_ids}")
-    # Create masks for the two conditions
-    condition = (nodes2element_matrix[i_indices, j_indices] == 0) | (nodes2element_matrix[j_indices, i_indices] != 0)
-    
-    # For condition True
-    true_edges = edge_ids[condition]
-    true_i = i_indices[condition]
-    true_j = j_indices[condition]
-    print(f"true_edges: {true_edges}, true_i: {true_i}, true_j: {true_j}")
-    sol_matrix[true_edges, 0] = true_j + 1  # 1-based indexing
-    sol_matrix[true_edges, 1] = true_i + 1
-    sol_matrix[true_edges, 3] = nodes2element_matrix[true_i, true_j]
-    sol_matrix[true_edges, 2] = nodes2element_matrix[true_j, true_i]
-    
-    # For condition False
-    false_edges = edge_ids[~condition]
-    false_i = i_indices[~condition]
-    false_j = j_indices[~condition]
-    print(f"false_edges: {false_edges}, false_i: {false_i}, false_j: {false_j}")
-    sol_matrix[false_edges, 0] = false_i + 1
-    sol_matrix[false_edges, 1] = false_j + 1
-    sol_matrix[false_edges, 2] = nodes2element_matrix[false_i, false_j]
-    sol_matrix[false_edges, 3] = nodes2element_matrix[false_j, false_i]
-    
+
+    # Apply the True‐case assignments
+    tmask = condition
+    te = edge_ids[tmask]
+    ti = i_indices[tmask]
+    tj = j_indices[tmask]
+    # print(f"te: {te}, ti: {ti}, tj: {tj}")
+    sol_matrix[ te, 0] = tj + 1
+    sol_matrix[ te, 1] = ti + 1
+    sol_matrix[ te, 3] = v_ij[tmask]
+    sol_matrix[ te, 2] = v_ji[tmask]
+
+    # Apply the False‐case assignments
+    fmask = ~condition
+    fe = edge_ids[fmask]
+    fi = i_indices[fmask]
+    fj = j_indices[fmask]
+    # print(f"fe: {fe}, fi: {fi}, fj: {fj}")
+    sol_matrix[ fe, 0] = fi + 1
+    sol_matrix[ fe, 1] = fj + 1
+    sol_matrix[ fe, 2] = v_ij[fmask]
+    sol_matrix[ fe, 3] = v_ji[fmask]
+
     return sol_matrix
 
 
@@ -147,7 +216,7 @@ def add_nodes(coordinates, elements, dirichlet, neumann):
     
     #nodes2element_matrix = nodes2element(coordinates, elements).toarray()
     nodes2edge_matrix, edge_no = nodes2edge(coordinates, elements)
-    nodes2edge_matrix = nodes2edge_matrix.toarray()
+    #nodes2edge_matrix = nodes2edge_matrix.toarray()
     edge2element_matrix = edge2element(coordinates, elements)
 
     num_nodes = len(coordinates)
@@ -197,12 +266,12 @@ def add_nodes(coordinates, elements, dirichlet, neumann):
     print(f"Time taken to add nodes and elements: {end - start:.4f} seconds")
     new_coordinates = coordinates + new_nodes
     start = time.time()
-    new_node2element_matrix = nodes2element(new_coordinates, new_elements).toarray()
+    new_node2element_matrix = nodes2element(new_coordinates, new_elements)#.toarray()
     end = time.time()
     print(f"Time taken to compute node to element connectivity matrix: {end - start:.4f} seconds")
     start = time.time()
     new_node2edge_matrix, new_edge_no = nodes2edge(new_coordinates, new_elements)
-    new_node2edge_matrix = new_node2edge_matrix.toarray()
+    #new_node2edge_matrix = new_node2edge_matrix.toarray()
     end = time.time()
     print(f"Time taken to compute node to edge connectivity matrix: {end - start:.4f} seconds")
     start = time.time()
@@ -222,7 +291,7 @@ def refine_mesh(coordinates, elements, dirichlet, neumann, iterations):
         iter += 1
     return coordinates, elements, dirichlet, neumann, node2element_matrix, node2edge_matrix, edge2element_matrix
 
-coordinates, elements, dirichlet, neumann, node2element_matrix, node2edge_matrix, edge2element_matrix = refine_mesh(coordinates, elements, dirichlet, neumann, 1)
+coordinates, elements, dirichlet, neumann, node2element_matrix, node2edge_matrix, edge2element_matrix = refine_mesh(coordinates, elements, dirichlet, neumann, 10)
 show_mesh(coordinates, elements)
 
 
