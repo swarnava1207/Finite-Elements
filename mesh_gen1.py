@@ -9,7 +9,7 @@ from scipy.sparse import csr_matrix, lil_matrix, triu, coo_matrix
 import matplotlib
 #matplotlib.use('Agg')  # Use TkAgg backend for interactive plotting
 import matplotlib.pyplot as plt
-import numpy as np
+
 coordinates = []
 elements = []
 dirichlet =[]
@@ -289,9 +289,9 @@ def refine_mesh(coordinates, elements, dirichlet, neumann, iterations):
         print(f"Iteration {iter + 1} of {iterations}")
         coordinates, elements, dirichlet, neumann, node2element_matrix, node2edge_matrix, edge2element_matrix = add_nodes(coordinates, elements, dirichlet, neumann)
         iter += 1
-    return coordinates, elements, dirichlet, neumann, node2element_matrix, node2edge_matrix, edge2element_matrix
+    return coordinates, elements, dirichlet, neumann #, node2element_matrix, node2edge_matrix, edge2element_matrix
 
-coordinates, elements, dirichlet, neumann, node2element_matrix, node2edge_matrix, edge2element_matrix = refine_mesh(coordinates, elements, dirichlet, neumann, 10)
+coordinates, elements, dirichlet, neumann = refine_mesh(coordinates, elements, dirichlet, neumann, 7)
 show_mesh(coordinates, elements)
 
 
