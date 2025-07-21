@@ -53,7 +53,7 @@ unique_dirichlet_nodes = list(unique_dirichlet_nodes)
 free_nodes = [i for i in range(len(coordinates)) if i not in unique_dirichlet_nodes]
 
 def triangle_bases(coordinates, triangles):
-    bases = []
+    bases = np.zeros(len(coordinates), dtype=object)
     for tri in triangles:
         for i in range(1, 4):
             x1, y1 = coordinates[tri[i]-1][1], coordinates[tri[i]-1][2]
@@ -66,12 +66,12 @@ def triangle_bases(coordinates, triangles):
             denom = lambda x, y: np.array([1 , x1 , y1],
                                           [1 , x2 , y2],
                                           [1 , x3 , y3])
-            bases.append(lambda x, y: np.linalg.det(numer(x, y)) / np.linalg.det(denom(x, y)))
+            bases[triangles[i]] = lambda x, y: np.linalg.det(numer(x, y)) / np.linalg.det(denom(x, y))
     
     return bases
 
 def triangle_grads(coordinates, triangles):
-    grads = []
+    grads = np.zeros((len(triangles), 3), dtype=object)
     for tri in triangles:
         for i in range(1, 4):
             x1, y1 = coordinates[tri[i]-1][1], coordinates[tri[i]-1][2]
@@ -82,15 +82,17 @@ def triangle_grads(coordinates, triangles):
             area = ((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1))
             grad_x = lambda x, y: (y2 - y3) / area
             grad_y = lambda x, y: (x3 - x2) / area
-            
-            grads.append(lambda x, y: np.array([grad_x(x, y), grad_y(x, y)]))
+            grads[tri][i - 1] = (lambda x, y: np.array([grad_x(x, y), grad_y(x, y)]))
     
     return grads
 
 
+
+
+
 def stiffness_matrices_tri(coordinates, triangles):
-    bases = triangle_bases(coordinates, triangles)
-    grads = triangle_grads(coordinates, triangles)
+    # bases = triangle_bases(coordinates, triangles)
+    # grads = triangle_grads(coordinates, triangles)
     
     #print("Triangles:", triangles)
     stiffness_matrices = []
@@ -337,4 +339,4 @@ def main():
     show(triangles, quadrilaterals, coordinates, u)
     #plot_solution(coordinates, triangles, quadrilaterals, u)
 
-main()
+# main()

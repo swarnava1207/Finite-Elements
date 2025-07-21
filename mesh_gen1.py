@@ -291,8 +291,8 @@ def refine_mesh(coordinates, elements, dirichlet, neumann, iterations):
         iter += 1
     return coordinates, elements, dirichlet, neumann #, node2element_matrix, node2edge_matrix, edge2element_matrix
 
-coordinates, elements, dirichlet, neumann = refine_mesh(coordinates, elements, dirichlet, neumann, 7)
-show_mesh(coordinates, elements)
+# coordinates, elements, dirichlet, neumann = refine_mesh(coordinates, elements, dirichlet, neumann, 7)
+# show_mesh(coordinates, elements)
 
 
 
