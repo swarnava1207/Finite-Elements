@@ -82,7 +82,7 @@ def triangle_grads(coordinates, triangles):
             area = ((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1))
             grad_x = lambda x, y: (y2 - y3) / area
             grad_y = lambda x, y: (x3 - x2) / area
-            grads[tri][i - 1] = (lambda x, y: np.array([grad_x(x, y), grad_y(x, y)]))
+            grads[tri[0] - 1, i - 1] = (lambda x, y: np.array([grad_x(x, y), grad_y(x, y)]))
     
     return grads
 
@@ -93,15 +93,16 @@ def triangle_grads(coordinates, triangles):
 def stiffness_matrices_tri(coordinates, triangles):
     # bases = triangle_bases(coordinates, triangles)
     # grads = triangle_grads(coordinates, triangles)
-    
-    #print("Triangles:", triangles)
+    # print("Coordinates:", coordinates)
+    # print("Triangles:", triangles)
     stiffness_matrices = []
     for i in range(len(triangles)):
         #print(f"Triangle {i+1}: {triangles[i]}")
         x1, y1 = coordinates[triangles[i][1]-1][1], coordinates[triangles[i][1]-1][2]
         x2, y2 = coordinates[triangles[i][2]-1][1], coordinates[triangles[i][2]-1][2]
         x3, y3 = coordinates[triangles[i][3]-1][1], coordinates[triangles[i][3]-1][2]
-        #print(f"Triangle {i+1}: ({x1}, {y1}), ({x2}, {y2}), ({x3}, {y3})")
+        # print(f"Triangle {i+1}: ({x1}, {y1}), ({x2}, {y2}), ({x3}, {y3})")
+
         G = np.linalg.inv(np.array([[1, 1, 1],
                                     [x1, x2, x3],
                                     [y1, y2, y3]]))
@@ -239,7 +240,7 @@ def assemble_load_vector(coordinates, triangles, quadrilaterals, f, g, u_d, neum
 
     return A, b, u
 
-def solve(coordinates, triangles, quadrilaterals, f, g, u_d, neumann, dirichlet):
+def solve(coordinates, triangles, quadrilaterals, f, g, u_d, neumann, dirichlet, free_nodes):
     A, b, u = assemble_load_vector(coordinates, triangles, quadrilaterals, f, g, u_d, neumann, dirichlet)
     
     from scipy.sparse.linalg import spsolve

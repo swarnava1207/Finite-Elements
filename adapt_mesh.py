@@ -21,8 +21,15 @@ for i in range(len(all)):
             all[i].extend([tuple(map(float, line.strip().split())) for line in lines])
         else:
             all[i].extend([tuple(map(int, line.strip().split())) for line in lines])
+if len(coordinates[0]) == 2 :
+    coordinates = [(i + 1, coord[0], coord[1]) for i, coord in enumerate(coordinates)]
+if len(triangles[0]) == 3 :
+    triangles = [(i + 1, tri[0], tri[1], tri[2]) for i, tri in enumerate(triangles)]
+if len(dirichlet[0]) == 2 :
+    dirichlet = [(i + 1, d[0], d[1]) for i, d in enumerate(dirichlet)]
+if len(neumann[0]) == 2 :
+    neumann = [(i + 1, n[0], n[1]) for i, n in enumerate(neumann)]
 
-# coordinates = [(i + 1, coord[0], coord[1]) for i, coord in enumerate(coordinates)]
 
 for i in range(len(triangles)):
     x1, y1 = coordinates[triangles[i][1]-1][1], coordinates[triangles[i][1]-1][2]
@@ -40,7 +47,14 @@ coordinates = np.array(coordinates)
 triangles = np.array(triangles)
 dirichlet = np.array(dirichlet)
 neumann = np.array(neumann)
-        
+unique_dirichlet_nodes = set()
+for i in range(len(dirichlet)):
+    unique_dirichlet_nodes.add(dirichlet[i][1]-1)
+    unique_dirichlet_nodes.add(dirichlet[i][2]-1)
+unique_dirichlet_nodes = list(unique_dirichlet_nodes)
+free_nodes = [i for i in range(len(coordinates)) if i not in unique_dirichlet_nodes]
+print("Free Nodes:", free_nodes)
+# print("Coordinates:", coordinates)
 
 # Refine the mesh
 # def get_errors(coordinates, triangles,quadrilaterals, dirichlet, neumann, f , g, u_d) :
@@ -88,7 +102,7 @@ def error_tri(coordinates, triangles, f) :
         mp23 = (p2[1] + p3[1]) / 2, (p2[2] + p3[2]) / 2
         mp12 = (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2
         mp31 = (p3[1] + p1[1]) / 2, (p3[2] + p1[2]) / 2
-        error = (f(mp23)**2 + f(mp12)**2 + f(mp31)**2) * area / 3
+        error = (f(*mp23)**2 + f(*mp12)**2 + f(*mp31)**2) * area / 3
         errors[i] = np.sqrt(error * area)
     # errors = [(i + 1, errors[i]) for i in range(len(errors))]
     # errors.sort(key=lambda x: x[1], reverse=True)
@@ -97,6 +111,7 @@ def error_tri(coordinates, triangles, f) :
 def error_edge(coordinates, triangles, f, g, neumann, n2ed, ed2el, grads, u_h) :
     num_edges = len(ed2el)
     errors = np.zeros(len(triangles))
+    u_h = np.array(u_h)
     for i in range(num_edges):
         element1 = ed2el[i][2]
         element2 = ed2el[i][3]
@@ -108,6 +123,7 @@ def error_edge(coordinates, triangles, f, g, neumann, n2ed, ed2el, grads, u_h) :
             normal = np.array([- (coord2[2] - coord1[2]) / he, (coord2[1] - coord1[1]) / he])
             nodes1 = triangles[element1 - 1][1:]
             # Get the corresponding nodal solution values from u_h
+            nodes1 = np.array(nodes1)
             u_nodal1 = u_h[nodes1 - 1]
             # Get the three basis gradient functions for this element
             basis_grad_funcs1 = grads[element1 - 1]
@@ -119,6 +135,7 @@ def error_edge(coordinates, triangles, f, g, neumann, n2ed, ed2el, grads, u_h) :
             # --- Gradient of uh in element2 ---
             # Get the three 1-based node numbers for the second element
             nodes2 = triangles[element2 - 1][1:]
+            nodes2 = np.array(nodes2)
             # Get the corresponding nodal solution values from u_h
             u_nodal2 = u_h[nodes2 - 1]
             # Get the three basis gradient functions for this element
@@ -134,12 +151,15 @@ def error_edge(coordinates, triangles, f, g, neumann, n2ed, ed2el, grads, u_h) :
     for i in range(len(neumann)) :
         node1 = neumann[i][1] - 1
         node2 = neumann[i][2] - 1
-        element = ed2el[n2ed[node1][node2]][2]
+        # print("n2ed"    , n2ed)
+        # print("ed2el"   , ed2el)
+        element = ed2el[n2ed[node1, node2]][2]
         coord1, coord2 = coordinates[node1], coordinates[node2]
         he = np.sqrt((coord2[1] - coord1[1])**2 + (coord2[2] - coord1[2])**2)
         mp = (coord1[1] + coord2[1]) / 2, (coord1[2] + coord2[2]) / 2
         normal= np.array([- (coord2[2] - coord1[2]) / he, (coord2[1] - coord1[1]) / he])
         nodes1 = triangles[element1 - 1][1:]
+        nodes1 = np.array(nodes1)
         # Get the corresponding nodal solution values from u_h
         u_nodal1 = u_h[nodes1 - 1]
         # Get the three basis gradient functions for this element
@@ -148,7 +168,7 @@ def error_edge(coordinates, triangles, f, g, neumann, n2ed, ed2el, grads, u_h) :
         grad = (u_nodal1[0] * basis_grad_funcs1[0](0,0) +
                     u_nodal1[1] * basis_grad_funcs1[1](0,0) +
                     u_nodal1[2] * basis_grad_funcs1[2](0,0))
-        err = (he ** 2) * (np.dot(grad, normal) - g(mp)) ** 2 / 2
+        err = (he ** 2) * (np.dot(grad, normal) - g(*mp)) ** 2 / 2
         errors[element - 1] += err
     errors = np.sqrt(errors)
     # errors = [(i + 1, np.sqrt(errors[i])) for i in range(len(errors))]
@@ -169,7 +189,9 @@ def adaptive_refinement(coordinates, triangles, dirichlet, neumann, error_triang
         index = 1
         ct = i
         while index == 1 :
-            longest_edge = n2ed(triangles[ct][2] - 1, triangles[ct][3] - 1) - 1
+            # print("ct:", ct)
+            # print("triangles[ct]:", triangles[ct])
+            longest_edge = n2ed[triangles[ct][2] - 1, triangles[ct][3] - 1]  - 1
             if marker[longest_edge] > 0 :
                 index = 0
             else :
@@ -177,57 +199,130 @@ def adaptive_refinement(coordinates, triangles, dirichlet, neumann, error_triang
                 marker[longest_edge] = num_coords
                 x1, y1 = coordinates[triangles[ct][2] - 1][1], coordinates[triangles[ct][2] - 1][2]
                 x2, y2 = coordinates[triangles[ct][3] - 1][1], coordinates[triangles[ct][3] - 1][2]
-                new_coord = (x1 + x2) / 2, (y1 + y2) / 2
+                new_coord = num_coords, (x1 + x2) / 2, (y1 + y2) / 2
                 coordinates = np.append(coordinates, [new_coord], axis=0)
                 cur_error += error_triangle[ct][1]
-                ct = n2el[triangles[ct][3] - 1][triangles[ct][2] - 1]
-                if ct == 0 :
+                ct = n2el[triangles[ct][3] - 1, triangles[ct][2] - 1] - 1
+                if ct == -1 :
                     index = 0
         
     for i in range(num_triangles):
-        longest_edge = n2ed(triangles[i][2] - 1, triangles[i][3] - 1) - 1
-        if marker[longest_edge] > 0:
-            triangles[i] = (triangles[i][0], marker[longest_edge], triangles[i][3], triangles[i][1])
-            triangles.append((len(triangles) + 1, marker[longest_edge], triangles[i][1], triangles[i][2]))
-            left = n2ed(triangles[i][1] - 1, triangles[i][2] - 1) - 1
-            right = n2ed(triangles[i][3] - 1, triangles[i][1] - 1) - 1
+        # print("triangles[i]:", triangles[i])
+        longest_edge = n2ed[triangles[i][2] - 1, triangles[i][3] - 1] - 1
+        original_nodes = triangles[i]
+        if marker[longest_edge] > 0:  
+            left = n2ed[triangles[i][1] - 1, triangles[i][2] - 1] - 1
+            right = n2ed[triangles[i][3] - 1, triangles[i][1] - 1] - 1
+            triangles_tuple = (triangles[i][0], marker[longest_edge], triangles[i][3], triangles[i][1])
+            triangles = np.append(triangles, [(len(triangles) + 1, marker[longest_edge], triangles[i][1], triangles[i][2])], axis=0)
+            triangles[i] = triangles_tuple
+            if i < 30:
+                print("\n"*2)
+                print("i :", i, "left:", left, "right:", right, "longest_edge:", longest_edge, "marker:", marker[longest_edge])
+                print("triangles[i]:", triangles[i])
+                # print("\n"*4)
+
             if marker[left] > 0:
-                triangles[i] = (triangles[i][0], marker[left], marker[longest_edge], triangles[i][1])
-                triangles.append((len(triangles) + 1, marker[left], triangles[i][2], marker[longest_edge]))
+                triangles_tuple = (triangles[-1][0], marker[left], triangles[-1][2], marker[longest_edge])
+                triangles = np.append(triangles, [(len(triangles) + 1, marker[left], marker[longest_edge], triangles[-1][3])], axis=0)
+                triangles[-1] = triangles_tuple
+                if i < 30:
+                    print("\n"*2)
+                    print("i :", i, "left:", left, "right:", right, "longest_edge:", longest_edge, "marker:", marker[longest_edge])
+                    print("triangles[i]:", triangles[i])
             if marker[right] > 0:
-                triangles[-1] = (triangles[-1][0], marker[right], triangles[-1][1], marker[longest_edge])
-                triangles.append((len(triangles) + 1, marker[right], marker[longest_edge], triangles[i][3]))
-    
+                triangles_tuple = (triangles[i][0], marker[right], triangles[i][3], marker[longest_edge])
+                # triangles.append((len(triangles) + 1, marker[right], marker[longest_edge], triangles[i][3]))
+                triangles = np.append(triangles, [(len(triangles) + 1, marker[right], marker[longest_edge], triangles[i][2])], axis=0)
+                triangles[i] = triangles_tuple
+                if i < 30:
+                    print("\n"*2)
+                    print("i :", i, "left:", left, "right:", right, "longest_edge:", longest_edge, "marker:", marker[longest_edge])
+                    print("triangles[i]:", triangles[i])
     for i in range(len(neumann)):
-        edge = n2ed[neumann[i][1] - 1][neumann[i][2] - 1]
+        edge = n2ed[neumann[i][1] - 1, neumann[i][2] - 1]
         if marker[edge] > 0:
             neumann[i] = (neumann[i][0], neumann[i][1], marker[edge])
-            neumann.append((len(neumann) + 1, marker[edge], neumann[i][2]))
+            neumann = np.append(neumann, [(len(neumann) + 1, marker[edge], neumann[i][2])], axis=0)
     for i in range(len(dirichlet)):
-        edge = n2ed[dirichlet[i][1] - 1][dirichlet[i][2] - 1]
+        edge = n2ed[dirichlet[i][1] - 1,dirichlet[i][2] - 1]
         if marker[edge] > 0:
             dirichlet[i] = (dirichlet[i][0], dirichlet[i][1], marker[edge])
-            dirichlet.append((len(dirichlet) + 1, marker[edge], dirichlet[i][2]))
+            dirichlet = np.append(dirichlet, [(len(dirichlet) + 1, marker[edge], dirichlet[i][2])], axis=0)
     coordinates = np.array(coordinates)
     triangles = np.array(triangles)
     dirichlet = np.array(dirichlet)
     neumann = np.array(neumann)
     return coordinates, triangles, dirichlet, neumann
     
-def adaptive(coordinates, triangles, quadrilaterals, dirichlet, neumann,u_d, f, g, num_iters_unif, num_iter_adapt, theta):
+def adaptive(coordinates, triangles, quadrilaterals, dirichlet, neumann,u_d, f, g, num_iters_unif, num_iter_adapt, theta, free_nodes):
     coordinates, triangles, dirichlet, neumann = refine_mesh(coordinates, triangles, dirichlet, neumann, num_iters_unif)
-    for _ in range(num_iter_adapt):
-        errors_triangle = error_tri(coordinates, triangles, f)
+    for i in range(len(triangles)):
+        x1, y1 = coordinates[triangles[i][1]-1][1], coordinates[triangles[i][1]-1][2]
+        x2, y2 = coordinates[triangles[i][2]-1][1], coordinates[triangles[i][2]-1][2]
+        #print("coordinates:", coordinates[triangles[i][3]-1])
+        x3, y3 = coordinates[triangles[i][3]-1][1], coordinates[triangles[i][3]-1][2]
+        lengths = [np.sqrt((x2 - x1)**2 + (y2 - y1)**2),
+                np.sqrt((x3 - x2)**2 + (y3 - y2)**2),
+                np.sqrt((x1 - x3)**2 + (y1 - y3)**2)]
+        ind_hyp = np.argmax(lengths)
+        # keep hypotenuse as between nodes 2 nd 3 by shifting circularly using np
+        triangles[i] = (triangles[i][0], triangles[i][(ind_hyp + 2) % 3 + 1], triangles[i][(ind_hyp + 3) % 3 + 1], triangles[i][(ind_hyp + 4) % 3 + 1])
+
+    print("After Uniform Refinement:")
+    print("Coordinates:", coordinates)
+    print("Triangles:", triangles)
+    # print("Dirichlet:", dirichlet)
+    # print("Neumann:", neumann)
+    # show_mesh(coordinates, triangles)
+    unique_dirichlet_nodes = set()
+    
+    for i in range(len(dirichlet)):
+            unique_dirichlet_nodes.add(dirichlet[i][1]-1)
+            unique_dirichlet_nodes.add(dirichlet[i][2]-1)
+    unique_dirichlet_nodes = list(unique_dirichlet_nodes)
+    free_nodes = [i for i in range(len(coordinates)) if i not in unique_dirichlet_nodes]
+    print("Free Nodes:", free_nodes)
+    for index in range(num_iter_adapt):
+        
+        errors_tri = error_tri(coordinates, triangles, f)
         grads = triangle_grads(coordinates, triangles)
-        u_h = solve(coordinates, triangles, quadrilaterals, u_d, f, g, dirichlet, neumann)
+        u_h = solve(coordinates, triangles, quadrilaterals,f, g, u_d, neumann, dirichlet, free_nodes)
         n2ed, num_edges = nodes2edge(coordinates, triangles)
         n2el = nodes2element(coordinates, triangles)
         ed2el = edge2element(coordinates, triangles)
+        unique_dirichlet_nodes = set()
         error_edges = error_edge(coordinates, triangles, f, g, neumann, n2ed, ed2el, grads, u_h)
-        error_triangle = [(i + 1, errors_triangle[i]) for i in range(len(errors_triangle))]
+        error_triangle = [(i + 1, errors_tri[i] + error_edges[i]) for i in range(len(errors_tri))]
         error_triangle.sort(key=lambda x: x[1], reverse=True)
+        # print("Error Triangle:", error_triangle)
+        # print(f"Iteration {index + 1}:")
         coordinates, triangles, dirichlet, neumann = adaptive_refinement(coordinates, triangles, dirichlet, neumann, error_triangle, theta, n2el, n2ed, num_edges)
+        unique_dirichlet_nodes = set()
+        for i in range(len(dirichlet)):
+            unique_dirichlet_nodes.add(dirichlet[i][1]-1)
+            unique_dirichlet_nodes.add(dirichlet[i][2]-1)
+        unique_dirichlet_nodes = list(unique_dirichlet_nodes)
+        free_nodes = [i for i in range(len(coordinates)) if i not in unique_dirichlet_nodes]
+    return coordinates, triangles, dirichlet, neumann
+# print("Initial Mesh:")
+# print("Coordinates:", coordinates)
+# print("Triangles:", triangles)
+# print("Dirichlet:", dirichlet)
+# print("Neumann:", neumann)
+# show_mesh(coordinates, triangles)
 
+f = lambda x, y: 1
+g = lambda x, y: 0
+u_d = lambda x, y: 0
+theta = 0.3
+num_iters_unif = 2
+num_iter_adapt = 2
+coordinates, triangles, dirichlet, neumann = adaptive(coordinates, triangles, quadrilaterals, dirichlet, neumann,u_d, f, g,num_iters_unif, num_iter_adapt, theta,  free_nodes)
+print("After Adaptive Refinement:")
+# print("Coordinates:", coordinates)
+print("Triangles:", triangles)
+# print("Dirichlet:", dirichlet)
+# print("Neumann:", neumann)
 show_mesh(coordinates, triangles)
-coordinates, triangles, dirichlet, neumann = adaptive(coordinates, triangles, quadrilaterals, dirichlet, neumann, lambda x, y: 0, lambda x, y: 1, lambda x, y: 0, 1, 1, 0.3)
-show_mesh(coordinates, triangles)
+# u_h = solve(coordinates, triangles, quadrilaterals, f, g, u_d, neumann, dirichlet, free_nodes)

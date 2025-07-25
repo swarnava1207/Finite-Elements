@@ -30,72 +30,80 @@ for i in range(len(all)):
         else:
             all[i].extend([tuple(map(int, line.strip().split())) for line in lines])
 
-def show_mesh(coordinates, elements):
-    from vispy import use
-    use('glfw')
-    from vispy import scene, color, app
-    coords = np.asarray(coordinates, dtype=np.float32)
-    elems  = np.asarray(elements,   dtype=np.int32) - 1
-    ntri   = elems.shape[0]
+coordinates = [(i + 1, coord[0], coord[1]) for i, coord in enumerate(coordinates)]
+elements = [(i + 1, elem[0], elem[1], elem[2]) for i, elem in enumerate(elements)]
+dirichlet = [(i + 1, d[0], d[1]) for i, d in enumerate(dirichlet)]
+neumann = [(i + 1, n[0], n[1]) for i, n in enumerate(neumann)]
 
-    # Pick per-triangle colors
+
+
+
+def show_mesh(coordinates, elements):
+    import numpy as np
+    from vispy import use, scene, color, app
+    use('glfw') # Or another suitable backend
+
+    coordinates = np.array(coordinates, dtype=np.float32)
+    elements = np.array(elements, dtype=np.int32)
+
+    coords = np.asarray(coordinates[:, 1:], dtype=np.float32)
+    elems = np.asarray(elements[:, 1:], dtype=np.int32) - 1
+
+    ntri = elems.shape[0]
     cmap = color.get_colormap("turbo")
     tri_colors = cmap.map(np.linspace(0, 1, ntri))
 
-    # Build canvas + 2D pan/zoom view
-    canvas = scene.SceneCanvas(keys='interactive',
-                               bgcolor='white',
-                               size=(800,800),
-                               show=True)
-    view   = canvas.central_widget.add_view()
+    canvas = scene.SceneCanvas(keys='interactive', bgcolor='white', size=(800, 800), show=True)
+    view = canvas.central_widget.add_view()
     view.camera = 'panzoom'
 
-    # Draw filled triangles (no edges)
+    # --- Draw filled triangles (no edges) ---
     mesh = scene.visuals.Mesh(
         vertices=coords,
         faces=elems,
         face_colors=tri_colors,
-        shading=None        # flat shading
+        shading=None
     )
     view.add(mesh)
 
-    all_edges = np.vstack([
-    coords[elems[:, [0,1]]],
-    coords[elems[:, [1,2]]],
-    coords[elems[:, [2,0]]],
-    ]).reshape(-1, 2, 2)
+    # --- Draw the Edges (Corrected Part) ---
+    # Create an array of line segments. Each row is a point,
+    # and every two rows define one edge.
+    edge_verts = np.vstack([
+        coords[elems[:, [0, 1]]],  # Edges from vertex 0 to 1
+        coords[elems[:, [1, 2]]],  # Edges from vertex 1 to 2
+        coords[elems[:, [2, 0]]],  # Edges from vertex 2 to 0
+    ]).reshape(-1, 2)
 
-    # Flatten to a (N_points, 2) array for Line
-    segs = all_edges.reshape(-1, 2)
-
-    # Create a Line visual, in 'segments' mode, colored black
+    # Create a Line visual in 'segments' mode
     lines = scene.visuals.Line(
-        pos=segs,
-        connect='segments',
-        color=(0, 0, 0, 1),   # RGBA tuple is more reliable than 'black'
-        width=1.0,
-        method='gl'           # ensure we’re using the GL backend
+        pos=edge_verts,
+        connect='segments', # This tells vispy to draw a line for each pair of points
+        color='black',
+        width=1.0
     )
-    # Draw on top of the mesh:
-    # Disable depth‐testing so edges aren’t hidden by the fills:
     lines.set_gl_state(depth_test=False)
-
-    # Force lines to draw *after* the mesh:
-    lines.order = 1                # give it a higher draw-order
-
+    lines.order = 1
     view.add(lines)
 
-    # Draw nodes on top
+    # --- Draw nodes and labels (from previous steps) ---
     scatter = scene.visuals.Markers()
     scatter.set_data(coords, face_color='red', size=5)
+    scatter.order = 2
     view.add(scatter)
+    
+    label_texts = [str(elements[i, 0]) for i in range(ntri)]
+    label_positions = np.array([np.mean(coords[elems[i]], axis=0) for i in range(ntri)])
+    
+    labels = scene.visuals.Text(
+        text=label_texts, pos=label_positions, color='black',
+        font_size=6, anchor_x='center', anchor_y='center'
+    )
+    labels.order = 3
+    view.add(labels)
 
-    # Fit the data
-    view.camera.set_range(x=(coords[:,0].min(), coords[:,0].max()),
-                          y=(coords[:,1].min(), coords[:,1].max()))
-
+    view.camera.set_range()
     app.run()
-
 
 #show_mesh()
 
@@ -106,9 +114,10 @@ def nodes2element(coordinates, elements):
     connectivity = lil_matrix((num_nodes, num_nodes), dtype=np.int32)
    
     for k,element in enumerate(elements):
-        for i in range(4):
-            node1 = element[i % 3]
-            node2 = element[(i + 1) % 3]
+        for i in range(3):
+            node1 = element[i % 3 + 1]
+            node2 = element[(i + 1) % 3 + 1]
+            # print(f"Element {k + 1}, nodes {node1} and {node2}")
             connectivity[node1 - 1, node2 - 1] = k + 1
             
     return csr_matrix(connectivity)
@@ -198,17 +207,17 @@ def edge2element(coordinates, elements):
     return sol_matrix
 
 
-print("Nodes to Element Connectivity Matrix:")
-element_matrix = nodes2element(coordinates, elements)
-print(element_matrix.toarray())
+# print("Nodes to Element Connectivity Matrix:")
+# element_matrix = nodes2element(coordinates, elements)
+# print(element_matrix.toarray())
 
-print("Nodes to Edge Connectivity Matrix:")
-edge_matrix, edge_no = nodes2edge(coordinates, elements)
-print(edge_matrix.toarray())
+# print("Nodes to Edge Connectivity Matrix:")
+# edge_matrix, edge_no = nodes2edge(coordinates, elements)
+# print(edge_matrix.toarray())
             
-print("Edge to Element Connectivity Matrix:")
-edge_element_matrix = edge2element(coordinates, elements)
-print(edge_element_matrix)
+# print("Edge to Element Connectivity Matrix:")
+# edge_element_matrix = edge2element(coordinates, elements)
+# print(edge_element_matrix)
 
 
                 
@@ -220,7 +229,9 @@ def add_nodes(coordinates, elements, dirichlet, neumann):
     edge2element_matrix = edge2element(coordinates, elements)
 
     num_nodes = len(coordinates)
-    num_elements = len(elements)
+    num_elements = 1
+    num_dirichlet = len(dirichlet)
+    num_neumann = len(neumann)
 
     new_nodes = []
     new_elements = []
@@ -230,41 +241,51 @@ def add_nodes(coordinates, elements, dirichlet, neumann):
     start = time.time()
     for i in range(edge_no):
         edge = edge2element_matrix[i]
-        node1_coords = coordinates[edge[0] - 1]
-        node2_coords = coordinates[edge[1] - 1]
+        node1_coords = coordinates[edge[0] - 1][1 :]
+        node2_coords = coordinates[edge[1] - 1][1 :]
         new_node_coords = ((node1_coords[0] + node2_coords[0]) / 2,
                            (node1_coords[1] + node2_coords[1]) / 2)
-        new_nodes.append(new_node_coords)
+        new_nodes.append((num_nodes + 1, new_node_coords[0], new_node_coords[1]))
+        num_nodes += 1
 
-
+    num_nodes = len(coordinates)
     for element in elements :
-        node1, node2, node3 = element
+        node1, node2, node3 = element[1 :]
         edge1 = nodes2edge_matrix[node1 - 1, node2 - 1]
         edge2 = nodes2edge_matrix[node2 - 1, node3 - 1]
         edge3 = nodes2edge_matrix[node3 - 1, node1 - 1]
         new_node_1_index = num_nodes + edge1
         new_node_2_index = num_nodes + edge2
         new_node_3_index = num_nodes + edge3 
-        new_elements.extend([(new_node_1_index, new_node_2_index, new_node_3_index),
-                            (new_node_1_index, node2, new_node_2_index),
-                            (new_node_2_index, node3, new_node_3_index),
-                            (new_node_3_index, node1, new_node_1_index)])
+        new_elements.extend([(num_elements,new_node_1_index, new_node_2_index, new_node_3_index),
+                            (num_elements + 1,new_node_1_index, node2, new_node_2_index),
+                            (num_elements + 2,new_node_2_index, node3, new_node_3_index),
+                            (num_elements + 3,new_node_3_index, node1, new_node_1_index)])
+        num_elements += 4
+
     for node in dirichlet:
-        edge = nodes2edge_matrix[node[0] - 1, node[1] - 1]
+        print(f"Processing Dirichlet node: {node}") 
+        edge = nodes2edge_matrix[node[1] - 1, node[2] - 1]
         new_node = new_nodes[edge - 1]
         new_node_index = num_nodes + edge
-        new_dirichlet.append((new_node_index, node[0]))
-        new_dirichlet.append((new_node_index, node[1]))
+        new_dirichlet.append((num_dirichlet + 1, new_node_index, node[1]))
+        new_dirichlet.append((num_dirichlet + 2, new_node_index, node[2]))
+        num_dirichlet += 2
     
     for node in neumann:
-        edge = nodes2edge_matrix[node[0] - 1, node[1] - 1]
+        edge = nodes2edge_matrix[node[1] - 1, node[2] - 1]
         new_node = new_nodes[edge - 1]
         new_node_index = num_nodes + edge
-        new_neumann.append((new_node_index, node[0]))
-        new_neumann.append((new_node_index, node[1]))
+        new_neumann.append((num_neumann + 1, new_node_index, node[1]))
+        new_neumann.append((num_neumann + 2, new_node_index, node[2]))
+        num_neumann += 2
     end = time.time()
     print(f"Time taken to add nodes and elements: {end - start:.4f} seconds")
-    new_coordinates = coordinates + new_nodes
+    coordinates = np.array(coordinates, dtype=np.float32)
+    new_nodes = np.array(new_nodes, dtype=np.float32)
+    new_coordinates = np.vstack((coordinates, new_nodes))
+    # print(f"New coordinates: {new_coordinates}")
+    # print(f"New elements: {new_elements}")
     start = time.time()
     new_node2element_matrix = nodes2element(new_coordinates, new_elements)#.toarray()
     end = time.time()
@@ -284,6 +305,8 @@ def add_nodes(coordinates, elements, dirichlet, neumann):
             new_node2element_matrix, new_node2edge_matrix, new_edge2element_matrix)
 
 def refine_mesh(coordinates, elements, dirichlet, neumann, iterations):
+    print("Coordinates:", coordinates)
+    print("Elements:", elements)
     iter = 0
     while iter < iterations:
         print(f"Iteration {iter + 1} of {iterations}")
@@ -291,7 +314,12 @@ def refine_mesh(coordinates, elements, dirichlet, neumann, iterations):
         iter += 1
     return coordinates, elements, dirichlet, neumann #, node2element_matrix, node2edge_matrix, edge2element_matrix
 
-# coordinates, elements, dirichlet, neumann = refine_mesh(coordinates, elements, dirichlet, neumann, 7)
+# coordinates, elements, dirichlet, neumann = refine_mesh(coordinates, elements, dirichlet, neumann, 1)
+# # print("After Refinement:")
+# print("Coordinates:", coordinates)
+# print("Elements:", elements)
+# # print("Dirichlet:", dirichlet)
+# # print("Neumann:", neumann)
 # show_mesh(coordinates, elements)
 
 
